@@ -1,0 +1,29 @@
+:root {
+  --event-red: hsl(0, 75%, 60%);
+  --event-blue: hsl(200, 80%, 50%);
+  --event-green: hsl(150, 80%, 30%);
+
+  --btn-border: #dadce0;
+  --out-of-month-bg: #dadce0;
+  --default-text: #333;
+  --btn-hover-bg: #f1f3f4;
+
+  --delete-btn-border: hsl(0, 75%, 60%);
+  --delete-btn-bg: hsl(0, 75%, 95%);
+  --delete-btn-text: hsl(0, 75%, 10%);
+  --delete-btn-hover-bg: hsl(0, 75%, 90%);
+
+  --save-or-add-btn-border: hsl(150, 80%, 30%);
+  --save-or-add-btn-bg: hsl(150, 80%, 95%);
+  --save-or-add-btn-text: hsl(150, 80%, 10%);
+  --save-or-add-btn-hover-bg: hsl(150, 80%, 90%);
+
+  --text-week-name: #777;
+  --text-today-bg: hsl(200, 80%, 50%);
+  --text-today: white;
+  --text-all-day-event: white;
+  --text-timed-event: #777;
+
+  --modal-date-header: #555;
+  --modal-form-label: #777;
+}
