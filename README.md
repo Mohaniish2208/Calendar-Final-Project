@@ -87,4 +87,4 @@ npm run build
 
 ## Author
 
-- [@Mohaniish2208] ([Github](https://www.frontendmentor.io/profile/Mohaniish2208))
+- [@Mohaniish2208] ([Github](https://github.com/Mohaniish2208))
