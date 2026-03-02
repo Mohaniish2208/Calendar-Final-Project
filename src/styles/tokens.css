@@ -1,29 +1,64 @@
 :root {
-  --event-red: hsl(0, 75%, 60%);
-  --event-blue: hsl(200, 80%, 50%);
-  --event-green: hsl(150, 80%, 30%);
+  --font-ui: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 
-  --btn-border: #dadce0;
-  --out-of-month-bg: #dadce0;
-  --default-text: #333;
-  --btn-hover-bg: #f1f3f4;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
 
-  --delete-btn-border: hsl(0, 75%, 60%);
-  --delete-btn-bg: hsl(0, 75%, 95%);
-  --delete-btn-text: hsl(0, 75%, 10%);
-  --delete-btn-hover-bg: hsl(0, 75%, 90%);
+  --radius-1: 0.4rem;
+  --radius-2: 0.75rem;
+  --radius-3: 1rem;
 
-  --save-or-add-btn-border: hsl(150, 80%, 30%);
-  --save-or-add-btn-bg: hsl(150, 80%, 95%);
-  --save-or-add-btn-text: hsl(150, 80%, 10%);
-  --save-or-add-btn-hover-bg: hsl(150, 80%, 90%);
+  --surface-base: #ffffff;
+  --surface-muted: #f6f8fb;
+  --surface-outside: #edf2f7;
+  --surface-app: linear-gradient(180deg, #f8fafc 0%, #edf3fa 100%);
 
-  --text-week-name: #777;
-  --text-today-bg: hsl(200, 80%, 50%);
-  --text-today: white;
-  --text-all-day-event: white;
-  --text-timed-event: #777;
+  --default-text: #1f2937;
+  --color-muted: #64748b;
+  --color-past: #94a3b8;
+  --color-danger: #b91c1c;
+  --focus-ring: #2563eb;
 
-  --modal-date-header: #555;
-  --modal-form-label: #777;
+  --border-subtle: #dbe1ea;
+  --btn-border: #d1d8e2;
+  --btn-hover-border: #c2ccd8;
+  --btn-hover-bg: #eef2f7;
+  --input-border: #cdd6e1;
+
+  --delete-btn-border: #f1b2b2;
+  --delete-btn-bg: #fff1f1;
+  --delete-btn-text: #991b1b;
+  --delete-btn-hover-bg: #ffe5e5;
+
+  --save-or-add-btn-border: #8ad2ba;
+  --save-or-add-btn-bg: #e8f8f2;
+  --save-or-add-btn-text: #0f5132;
+  --save-or-add-btn-hover-bg: #daf2ea;
+
+  --event-red: #e85d5d;
+  --event-red-soft: #fde8e8;
+  --event-blue: #3b82f6;
+  --event-blue-soft: #e6f0ff;
+  --event-green: #16a34a;
+  --event-green-soft: #e7f8ec;
+
+  --text-week-name: var(--color-muted);
+  --text-today-bg: #2563eb;
+  --text-today: #ffffff;
+  --modal-date-header: #475569;
+  --modal-form-label: #475569;
+
+  --calendar-row-min-height: 8.5rem;
+  --modal-animation-ms: 220ms;
+
+  --shadow-panel:
+    0 22px 44px rgba(15, 23, 42, 0.08),
+    0 8px 16px rgba(15, 23, 42, 0.06);
+  --shadow-popover:
+    0 26px 52px rgba(15, 23, 42, 0.18),
+    0 10px 20px rgba(15, 23, 42, 0.12);
 }

@@ -1,10 +1,109 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
-import type { CalendarEvent, DateKey, EventColor } from "../../types/calendar"
-import { addMonths, getMonthMatrix, isPastDateKey, isTodayDateKey } from "../../utils/dateGrid"
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, RefObject } from "react"
+import type { CalendarCursor, CalendarEvent, DateKey, EventColor, EventFormErrors } from "../../types/calendar"
+import type { DayCell as CalendarDayCell } from "../../utils/dateGrid"
+import { addMonths, formatMonthLabel, formatShortDate, getMonthMatrix, isPastDateKey, isTodayDateKey } from "../../utils/dateGrid"
+import { groupEventsByDate, splitVisibleEvents } from "../../utils/events"
 import { loadEvents, saveEvents } from "../../utils/storage"
 
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const COLOR_OPTIONS: EventColor[] = ["red", "green", "blue"]
+
+const DEFAULT_START_TIME = "09:00"
+const DEFAULT_END_TIME = "10:00"
+const DEFAULT_VISIBLE_EVENTS_FALLBACK = 3
+const MODAL_ANIMATION_MS = 220
+
+type CalendarProps = {
+  allowPastEvents?: boolean
+}
+
+type EventDraft = {
+  name: string
+  allDay: boolean
+  startTime: string
+  endTime: string
+  color: EventColor
+}
+
+type EventItemProps = {
+  calendarEvent: CalendarEvent
+  onSelect?: (calendarEvent: CalendarEvent) => void
+  showTimeRange?: boolean
+  measureOnly?: boolean
+}
+
+type ModalFrameProps = {
+  isClosing: boolean
+  labelledBy: string
+  size?: "default" | "compact"
+  onClose: () => void
+  children: React.ReactNode
+}
+
+type EventModalProps = {
+  dateKey: DateKey
+  draft: EventDraft
+  errors: EventFormErrors
+  isClosing: boolean
+  isEditing: boolean
+  onDraftChange: (patch: Partial<EventDraft>) => void
+  onSave: () => void
+  onDelete: () => void
+  onClose: () => void
+}
+
+type ViewMoreModalProps = {
+  dateKey: DateKey
+  dayEvents: CalendarEvent[]
+  isClosing: boolean
+  onEditEvent: (calendarEvent: CalendarEvent) => void
+  onClose: () => void
+}
+
+type DayCellProps = {
+  calendarDay: CalendarDayCell
+  columnIndex: number
+  rowIndex: number
+  dayEvents: CalendarEvent[]
+  allowPastEvents: boolean
+  onAddEvent: (dateKey: DateKey) => void
+  onEditEvent: (calendarEvent: CalendarEvent) => void
+  onViewMore: (dateKey: DateKey) => void
+}
+
+type CalendarGridProps = {
+  visibleWeeks: CalendarDayCell[][]
+  eventMap: Record<DateKey, CalendarEvent[]>
+  allowPastEvents: boolean
+  onAddEvent: (dateKey: DateKey) => void
+  onEditEvent: (calendarEvent: CalendarEvent) => void
+  onViewMore: (dateKey: DateKey) => void
+}
+
+type CalendarHeaderProps = {
+  monthLabel: string
+  onGoPrev: () => void
+  onGoToday: () => void
+  onGoNext: () => void
+}
+
+function createEmptyDraft(): EventDraft {
+  return {
+    name: "",
+    allDay: true,
+    startTime: DEFAULT_START_TIME,
+    endTime: DEFAULT_END_TIME,
+    color: "blue",
+  }
+}
+
+function clearTimer(timerRef: { current: number | null }): void {
+  if (timerRef.current !== null) {
+    window.clearTimeout(timerRef.current)
+    timerRef.current = null
+  }
+}
 
 function swatchColor(value: EventColor): string {
   if (value === "red") return "var(--event-red)"
@@ -12,539 +111,764 @@ function swatchColor(value: EventColor): string {
   return "var(--event-green)"
 }
 
-function formatModalDate(dateKey: DateKey | null): string {
-  if (!dateKey) return ""
-  const [year, month, day] = dateKey.split("-")
-  return `${Number(month)}/${Number(day)}/${year.slice(-2)}`
+function swatchSurfaceColor(value: EventColor): string {
+  if (value === "red") return "var(--event-red-soft)"
+  if (value === "blue") return "var(--event-blue-soft)"
+  return "var(--event-green-soft)"
 }
 
-export default function Calendar() {
-  const today = new Date()
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [cursor, setCursor] = useState({
-    year: today.getFullYear(),
-    monthIndex: today.getMonth(),
-  })
-
-  const [events, setEvents] = useState<CalendarEvent[]>(() => loadEvents())
-  const [isClosing, setIsClosing] = useState(false)
-  const [isViewMoreClosing, setIsViewMoreClosing] = useState(false)
-  const [activeDateKey, setActiveDateKey] = useState<DateKey | null>(null)
-  const [viewMoreDateKey, setViewMoreDateKey] = useState<DateKey | null>(null)
-  const [name, setName] = useState("")
-  const [allDay, setAllDay] = useState(true)
-  const [startTime, setStartTime] = useState("09:00")
-  const [endTime, setEndTime] = useState("10:00")
-  const [color, setColor] = useState<EventColor>("blue")
-  const cellRefs = useRef(new Map<DateKey, HTMLDivElement>())
-  const [maxVisibleDate, setMaxVisibleDate] = useState<Record<DateKey, number>>({})
-
-  const matrix = getMonthMatrix(cursor.year, cursor.monthIndex)
-
-  function goPrev() {
-    setCursor(addMonths(cursor.year, cursor.monthIndex, -1))
+function eventAriaLabel(calendarEvent: CalendarEvent, showTimeRange: boolean): string {
+  if (calendarEvent.allDay) {
+    return `${calendarEvent.name}, all day`
   }
 
-  function goToday() {
-    const t = new Date()
-    setCursor({ year: t.getFullYear(), monthIndex: t.getMonth() })
-  }
+  const timeLabel = showTimeRange ? `${calendarEvent.startTime} to ${calendarEvent.endTime}` : calendarEvent.startTime
+  return `${calendarEvent.name}, ${timeLabel}`
+}
 
-  function goNext() {
-    setCursor(addMonths(cursor.year, cursor.monthIndex, 1))
-  }
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  const focusableSelector =
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-  function monthLabel(year: number, monthIndex: number) {
-    return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(year, monthIndex, 1))
-  }
+  return Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => !element.hasAttribute("aria-hidden"))
+}
 
-  function openModal(dateKey: DateKey) {
-    setIsViewMoreClosing(false)
-    setViewMoreDateKey(null)
-    setEditingId(null)
-    setActiveDateKey(dateKey)
-    setName("")
-    setAllDay(true)
-    setStartTime("09:00")
-    setEndTime("10:00")
-    setColor("blue")
-  }
+function useModalFocusTrap(isOpen: boolean, dialogRef: RefObject<HTMLDivElement | null>, onClose: () => void): void {
+  useEffect(() => {
+    if (!isOpen) return
 
-  function closeModal() {
-    setIsClosing(true)
-    window.setTimeout(() => {
-      setActiveDateKey(null)
-      setEditingId(null)
-      setIsClosing(false)
-    }, 200)
-  }
+    const dialogElement = dialogRef.current
+    if (!dialogElement) return
 
-  function openViewMore(dateKey: DateKey) {
-    setIsViewMoreClosing(false)
-    setViewMoreDateKey(dateKey)
-  }
+    const previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
 
-  function closeViewMore() {
-    setIsViewMoreClosing(true)
-    window.setTimeout(() => {
-      setViewMoreDateKey(null)
-      setIsViewMoreClosing(false)
-    }, 200)
-  }
+    const focusFrame = window.requestAnimationFrame(() => {
+      const [firstFocusableElement] = getFocusableElements(dialogElement)
+      ;(firstFocusableElement ?? dialogElement).focus()
+    })
 
-  function openEditFromEvent(ev: CalendarEvent) {
-    const openEditor = () => {
-      setActiveDateKey(ev.dateKey)
-      setEditingId(ev.id)
-      setName(ev.name)
-      setColor(ev.color)
-      setAllDay(ev.allDay)
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        onClose()
+        return
+      }
+
+      if (event.key !== "Tab") return
+
+      const focusableElements = getFocusableElements(dialogElement)
+      if (focusableElements.length === 0) {
+        event.preventDefault()
+        dialogElement.focus()
+        return
+      }
+
+      const firstFocusableElement = focusableElements[0]
+      const lastFocusableElement = focusableElements[focusableElements.length - 1]
+      const activeElement = document.activeElement
+
+      if (event.shiftKey && activeElement === firstFocusableElement) {
+        event.preventDefault()
+        lastFocusableElement.focus()
+      }
+
+      if (!event.shiftKey && activeElement === lastFocusableElement) {
+        event.preventDefault()
+        firstFocusableElement.focus()
+      }
     }
 
-    if (!ev.allDay) {
-      setStartTime(ev.startTime)
-      setEndTime(ev.endTime)
-    } else {
-      setStartTime("09:00")
-      setEndTime("10:00")
-    }
+    document.addEventListener("keydown", handleKeyDown)
 
-    if (viewMoreDateKey) {
-      setIsViewMoreClosing(true)
-      window.setTimeout(() => {
-        setViewMoreDateKey(null)
-        setIsViewMoreClosing(false)
-        openEditor()
-      }, 200)
+    return () => {
+      window.cancelAnimationFrame(focusFrame)
+      document.removeEventListener("keydown", handleKeyDown)
+      previousActiveElement?.focus()
+    }
+  }, [dialogRef, isOpen, onClose])
+}
+
+const EventItem = memo(function EventItem({
+  calendarEvent,
+  onSelect,
+  showTimeRange = false,
+  measureOnly = false,
+}: EventItemProps) {
+  const isInteractive = !measureOnly && typeof onSelect === "function"
+  const timeLabel = calendarEvent.allDay ? "" : showTimeRange ? `${calendarEvent.startTime} - ${calendarEvent.endTime}` : calendarEvent.startTime
+  const eventItemClasses = `eventItem ${calendarEvent.allDay ? "eventItem--allDay" : "eventItem--timed"}${measureOnly ? " eventItem--measure" : ""}`
+  const eventColorStyles = {
+    "--event-accent": swatchColor(calendarEvent.color),
+    "--event-surface": swatchSurfaceColor(calendarEvent.color),
+  } as CSSProperties
+
+  return (
+    <button
+      type="button"
+      className={eventItemClasses}
+      onClick={isInteractive ? () => onSelect(calendarEvent) : undefined}
+      style={eventColorStyles}
+      title={eventAriaLabel(calendarEvent, showTimeRange)}
+      aria-label={eventAriaLabel(calendarEvent, showTimeRange)}
+      aria-hidden={measureOnly}
+      tabIndex={measureOnly ? -1 : 0}
+      data-event-measure={measureOnly ? "true" : undefined}
+    >
+      {!calendarEvent.allDay && (
+        <span className="eventItem__time" aria-hidden="true">
+          {timeLabel}
+        </span>
+      )}
+
+      <span className="eventItem__label">{calendarEvent.name}</span>
+    </button>
+  )
+})
+
+function ModalFrame({ isClosing, labelledBy, size = "default", onClose, children }: ModalFrameProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const modalClasses = `modalCard${size === "compact" ? " modalCard--compact" : ""} ${isClosing ? "out" : "in"}`
+
+  useModalFocusTrap(!isClosing, dialogRef, onClose)
+
+  return (
+    <div className={`modalBackdrop ${isClosing ? "out" : "in"}`} onClick={onClose}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={labelledBy} tabIndex={-1} className={modalClasses} onClick={(event) => event.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function EventModal({ dateKey, draft, errors, isClosing, isEditing, onDraftChange, onSave, onDelete, onClose }: EventModalProps) {
+  const titleId = useId()
+  const nameInputId = useId()
+  const timeErrorId = useId()
+
+  return (
+    <ModalFrame isClosing={isClosing} labelledBy={titleId} onClose={onClose}>
+      <div className="modalHeader">
+        <div className="modalHeaderCopy">
+          <p className="modalEyebrow">Event</p>
+          <h2 id={titleId} className="modalTitle">
+            {isEditing ? "Edit Event" : "Add Event"}
+          </h2>
+          <p className="modalDate">{formatShortDate(dateKey)}</p>
+        </div>
+
+        <button type="button" className="btn btn--ghost modalClose" aria-label="Close dialog" onClick={onClose}>
+          {"\u00D7"}
+        </button>
+      </div>
+
+      <div className="modalBody">
+        <label className="formField" htmlFor={nameInputId}>
+          <span className="formLabel">
+            Name
+            <span className="requiredMark" aria-hidden="true">
+              *
+            </span>
+          </span>
+
+          <input
+            id={nameInputId}
+            type="text"
+            className={`formInput${errors.name ? " formInput--error" : ""}`}
+            value={draft.name}
+            onChange={(event) => onDraftChange({ name: event.target.value })}
+            aria-invalid={Boolean(errors.name)}
+            aria-describedby={errors.name ? `${nameInputId}-error` : undefined}
+            required
+          />
+
+          {errors.name && (
+            <span id={`${nameInputId}-error`} className="formError" role="alert">
+              {errors.name}
+            </span>
+          )}
+        </label>
+
+        <label className="checkboxField">
+          <input type="checkbox" checked={draft.allDay} onChange={(event) => onDraftChange({ allDay: event.target.checked })} />
+          <span>All day</span>
+        </label>
+
+        <div className="timeGrid">
+          <label className="formField">
+            <span className="formLabel">Start Time</span>
+            <input
+              type="time"
+              className={`formInput${errors.time ? " formInput--error" : ""}`}
+              value={draft.startTime}
+              onChange={(event) => onDraftChange({ startTime: event.target.value })}
+              disabled={draft.allDay}
+              aria-invalid={!draft.allDay && Boolean(errors.time)}
+              aria-describedby={errors.time && !draft.allDay ? timeErrorId : undefined}
+            />
+          </label>
+
+          <label className="formField">
+            <span className="formLabel">End Time</span>
+            <input
+              type="time"
+              className={`formInput${errors.time ? " formInput--error" : ""}`}
+              value={draft.endTime}
+              onChange={(event) => onDraftChange({ endTime: event.target.value })}
+              disabled={draft.allDay}
+              aria-invalid={!draft.allDay && Boolean(errors.time)}
+              aria-describedby={errors.time && !draft.allDay ? timeErrorId : undefined}
+            />
+          </label>
+        </div>
+
+        {errors.time && !draft.allDay && (
+          <span id={timeErrorId} className="formError" role="alert">
+            {errors.time}
+          </span>
+        )}
+
+        <fieldset className="colorField">
+          <legend className="formLabel">Color</legend>
+
+          <div className="colorSwatches">
+            {COLOR_OPTIONS.map((colorOption) => (
+              <button
+                key={colorOption}
+                type="button"
+                className={`colorSwatch${draft.color === colorOption ? " colorSwatch--selected" : ""}`}
+                onClick={() => onDraftChange({ color: colorOption })}
+                style={{ background: swatchColor(colorOption) }}
+                aria-label={`Select ${colorOption} color`}
+                aria-pressed={draft.color === colorOption}
+              />
+            ))}
+          </div>
+        </fieldset>
+
+        <div className="modalActions">
+          {isEditing ? (
+            <button type="button" className="btn btn--danger" onClick={onDelete}>
+              Delete
+            </button>
+          ) : (
+            <span className="modalActionsSpacer" aria-hidden="true" />
+          )}
+
+          <div className="modalActionGroup">
+            <button type="button" className="btn btn--ghost" onClick={onClose}>
+              Cancel
+            </button>
+
+            <button type="button" className="btn btn--primary" onClick={onSave}>
+              {isEditing ? "Save Changes" : "Add Event"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </ModalFrame>
+  )
+}
+
+function ViewMoreModal({ dateKey, dayEvents, isClosing, onEditEvent, onClose }: ViewMoreModalProps) {
+  const titleId = useId()
+
+  return (
+    <ModalFrame isClosing={isClosing} labelledBy={titleId} size="compact" onClose={onClose}>
+      <div className="modalHeader">
+        <div className="modalHeaderCopy">
+          <p className="modalEyebrow">Day Details</p>
+          <h2 id={titleId} className="modalTitle">
+            {formatShortDate(dateKey)}
+          </h2>
+        </div>
+
+        <button type="button" className="btn btn--ghost modalClose" aria-label="Close dialog" onClick={onClose}>
+          {"\u00D7"}
+        </button>
+      </div>
+
+      <div className="modalList">
+        {dayEvents.length === 0 ? (
+          <p className="emptyState">No events scheduled.</p>
+        ) : (
+          dayEvents.map((calendarEvent) => (
+            <EventItem key={calendarEvent.id} calendarEvent={calendarEvent} onSelect={onEditEvent} showTimeRange />
+          ))
+        )}
+      </div>
+    </ModalFrame>
+  )
+}
+
+const DayCell = memo(function DayCell({
+  calendarDay,
+  columnIndex,
+  rowIndex,
+  dayEvents,
+  allowPastEvents,
+  onAddEvent,
+  onEditEvent,
+  onViewMore,
+}: DayCellProps) {
+  const visibleEventsRef = useRef<HTMLDivElement>(null)
+  const measureEventsRef = useRef<HTMLDivElement>(null)
+  const moreButtonMeasureRef = useRef<HTMLButtonElement>(null)
+  const [maxVisibleEvents, setMaxVisibleEvents] = useState(() => Math.min(dayEvents.length, DEFAULT_VISIBLE_EVENTS_FALLBACK))
+
+  const isToday = isTodayDateKey(calendarDay.dateKey)
+  const isPast = isPastDateKey(calendarDay.dateKey)
+  const canCreateEvent = allowPastEvents || !isPast
+
+  const dayCellClasses = [
+    "dayCell",
+    !calendarDay.inMonth ? "dayCell--outside" : "",
+    isPast ? "dayCell--past" : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+
+  const measureVisibleEvents = useCallback(() => {
+    const visibleEventsElement = visibleEventsRef.current
+    const measureEventsElement = measureEventsRef.current
+
+    if (!visibleEventsElement || !measureEventsElement) return
+    if (dayEvents.length === 0) {
+      setMaxVisibleEvents(0)
       return
     }
 
-    openEditor()
-  }
+    const availableHeight = visibleEventsElement.clientHeight
+    if (availableHeight <= 0) return
 
-  const computeMaxVisibleForCell = useCallback((cellEl: HTMLDivElement): number => {
-    const cellHeight = cellEl.clientHeight
+    const rowGap = Number.parseFloat(window.getComputedStyle(visibleEventsElement).rowGap || "0")
+    const eventHeights = Array.from(measureEventsElement.querySelectorAll<HTMLElement>("[data-event-measure='true']")).map((element) => element.offsetHeight)
+    const fallbackHeight = eventHeights[0] ?? 0
+    const moreButtonHeight = moreButtonMeasureRef.current?.offsetHeight ?? fallbackHeight
 
-    const paddingTopBottom = 16
-    const headerBlock = 44
-    const marginTopEvents = 8
+    let usedHeight = 0
+    let visibleCount = 0
 
-    const available = cellHeight - paddingTopBottom - headerBlock - marginTopEvents
+    for (let index = 0; index < eventHeights.length; index += 1) {
+      const nextHeight = visibleCount === 0 ? eventHeights[index] : usedHeight + rowGap + eventHeights[index]
+      const hasOverflow = index < eventHeights.length - 1
+      const reservedMoreHeight = hasOverflow ? rowGap + moreButtonHeight : 0
 
-    const pillHeight = 18
-    const gap = 4
-    const rowHeight = pillHeight + gap
-
-    const raw = Math.floor(available / rowHeight)
-
-    return Math.max(0, Math.min(raw, 10))
-  }, [])
-
-  function save() {
-    if (!activeDateKey) return
-    if (!name.trim()) return
-
-    if (!allDay && startTime >= endTime) return
-
-    let newEvent: CalendarEvent
-
-    if (allDay) {
-      newEvent = {
-        id: crypto.randomUUID(),
-        name: name.trim(),
-        dateKey: activeDateKey,
-        color,
-        allDay: true,
+      if (nextHeight + reservedMoreHeight > availableHeight) {
+        break
       }
-    } else {
-      newEvent = {
-        id: crypto.randomUUID(),
-        name: name.trim(),
-        dateKey: activeDateKey,
-        color,
-        allDay: false,
-        startTime,
-        endTime,
+
+      usedHeight = nextHeight
+      visibleCount += 1
+    }
+
+    if (visibleCount === 0 && eventHeights.length === 1) {
+      visibleCount = 1
+    }
+
+    if (visibleCount === 0 && eventHeights.length > 1) {
+      visibleCount = moreButtonHeight <= availableHeight ? 0 : 1
+    }
+
+    setMaxVisibleEvents((currentVisibleCount) => (currentVisibleCount === visibleCount ? currentVisibleCount : visibleCount))
+  }, [dayEvents.length])
+
+  useEffect(() => {
+    const visibleEventsElement = visibleEventsRef.current
+    if (!visibleEventsElement) return
+
+    const measurementFrame = window.requestAnimationFrame(() => {
+      measureVisibleEvents()
+    })
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measureVisibleEvents)
+      return () => {
+        window.cancelAnimationFrame(measurementFrame)
+        window.removeEventListener("resize", measureVisibleEvents)
       }
     }
 
-    const next = editingId ? events.map((e) => (e.id === editingId ? { ...newEvent, id: editingId } : e)) : [...events, newEvent]
-    setEvents(next)
-    saveEvents(next)
-    closeModal()
-    setEditingId(null)
+    const resizeObserver = new ResizeObserver(() => {
+      measureVisibleEvents()
+    })
+
+    resizeObserver.observe(visibleEventsElement)
+    const dayCellElement = visibleEventsElement.closest(".dayCell")
+    if (dayCellElement instanceof HTMLElement) {
+      resizeObserver.observe(dayCellElement)
+    }
+
+    return () => {
+      window.cancelAnimationFrame(measurementFrame)
+      resizeObserver.disconnect()
+    }
+  }, [measureVisibleEvents])
+
+  const safeVisibleCount = Math.max(0, Math.min(maxVisibleEvents, dayEvents.length))
+  const { visible: visibleEvents, overflow } = splitVisibleEvents(dayEvents, safeVisibleCount)
+
+  const handleKeyboardOpen = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!canCreateEvent) return
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      onAddEvent(calendarDay.dateKey)
+    }
   }
 
-  const recalcMaxVisible = useCallback(() => {
-    const next: Record<DateKey, number> = {}
-    cellRefs.current.forEach((el, dateKey) => {
-      if (!el) return
-      next[dateKey] = computeMaxVisibleForCell(el)
-    })
-    setMaxVisibleDate(next)
-  }, [computeMaxVisibleForCell])
-
-  useLayoutEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      recalcMaxVisible()
-    })
-
-    return () => window.cancelAnimationFrame(frame)
-  }, [recalcMaxVisible, events, cursor.year, cursor.monthIndex])
-
-  useEffect(() => {
-    const onResize = () => recalcMaxVisible()
-    window.requestAnimationFrame(() => {
-      recalcMaxVisible()
-    })
-    window.addEventListener("resize", onResize)
-    return () => window.removeEventListener("resize", onResize)
-  }, [recalcMaxVisible])
-
   return (
-    <div className="appShell" style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr" }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "8px 16px 18px", borderBottom: "1px solid var(--btn-border)" }}>
-        <button className="btn btn-today" onClick={goToday}>
+    <div
+      className={dayCellClasses}
+      role="gridcell"
+      tabIndex={0}
+      aria-label={`${formatShortDate(calendarDay.dateKey)}${!calendarDay.inMonth ? ", outside current month" : ""}${isPast ? ", past date" : ""}`}
+      onKeyDown={handleKeyboardOpen}
+    >
+      <div className="dayCellHeader">
+        <div className="dayCellHeaderMain">
+          {rowIndex === 0 && <span className="weekdayLabel">{WEEK_DAYS[columnIndex]}</span>}
+
+          <span className={`dayNumber${isToday ? " dayNumber--today" : ""}`}>{Number(calendarDay.dateKey.slice(-2))}</span>
+        </div>
+
+        <button
+          type="button"
+          className="btn btn--ghost addBtn"
+          onClick={() => onAddEvent(calendarDay.dateKey)}
+          disabled={!canCreateEvent}
+          aria-label={`Add event on ${formatShortDate(calendarDay.dateKey)}`}
+        >
+          +
+        </button>
+      </div>
+
+      <div ref={visibleEventsRef} className="dayCellEvents">
+        {visibleEvents.map((calendarEvent) => (
+          <EventItem key={calendarEvent.id} calendarEvent={calendarEvent} onSelect={onEditEvent} />
+        ))}
+
+        {overflow > 0 && (
+          <button type="button" className="btn btn--more moreBtn" onClick={() => onViewMore(calendarDay.dateKey)}>
+            +{overflow} more
+          </button>
+        )}
+      </div>
+
+      <div ref={measureEventsRef} className="dayCellEvents dayCellEvents--measure" aria-hidden="true">
+        {dayEvents.map((calendarEvent) => (
+          <EventItem key={`measure-${calendarEvent.id}`} calendarEvent={calendarEvent} measureOnly />
+        ))}
+
+        <button ref={moreButtonMeasureRef} type="button" className="btn btn--more moreBtn" tabIndex={-1}>
+          +99 more
+        </button>
+      </div>
+    </div>
+  )
+})
+
+const CalendarGrid = memo(function CalendarGrid({
+  visibleWeeks,
+  eventMap,
+  allowPastEvents,
+  onAddEvent,
+  onEditEvent,
+  onViewMore,
+}: CalendarGridProps) {
+  return (
+    <div
+      className="calendarGrid"
+      role="grid"
+      aria-label="Monthly calendar"
+      style={{ gridTemplateRows: `repeat(${visibleWeeks.length}, minmax(var(--calendar-row-min-height), 1fr))` }}
+    >
+      {visibleWeeks.map((week, rowIndex) =>
+        week.map((calendarDay, columnIndex) => (
+          <DayCell
+            key={calendarDay.dateKey}
+            calendarDay={calendarDay}
+            rowIndex={rowIndex}
+            columnIndex={columnIndex}
+            dayEvents={eventMap[calendarDay.dateKey] ?? []}
+            allowPastEvents={allowPastEvents}
+            onAddEvent={onAddEvent}
+            onEditEvent={onEditEvent}
+            onViewMore={onViewMore}
+          />
+        )),
+      )}
+    </div>
+  )
+})
+
+const CalendarHeader = memo(function CalendarHeader({ monthLabel, onGoPrev, onGoToday, onGoNext }: CalendarHeaderProps) {
+  return (
+    <header className="calendarHeader">
+      <div className="calendarNav">
+        <button type="button" className="btn" onClick={onGoToday}>
           Today
         </button>
 
-        <button className="btn" onClick={goPrev} style={{ border: "white", background: "white" }}>
+        <button type="button" className="btn btn--ghost" onClick={onGoPrev} aria-label="Previous month">
           {"<"}
         </button>
 
-        <button className="btn" onClick={goNext} style={{ border: "white", background: "white" }}>
+        <button type="button" className="btn btn--ghost" onClick={onGoNext} aria-label="Next month">
           {">"}
         </button>
-
-        <h1 style={{ margin: 0, fontFamily: "sans-serif", fontSize: 28, fontWeight: 600 }}>{monthLabel(cursor.year, cursor.monthIndex)}</h1>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-          gridTemplateRows: `repeat(${matrix.length}, minmax(0, 1fr))`,
-          gap: 0,
-          minHeight: 0,
-          borderLeft: "1px solid var(--btn-border)",
-        }}
-      >
-        {matrix.flat().map((cell, i) => {
-          const row = Math.floor(i / 7)
-          const column = i % 7
-          const weekday = WEEK_DAYS[column]
-          const isToday = isTodayDateKey(cell.dateKey)
-          const isPast = isPastDateKey(cell.dateKey)
+      <h1 className="calendarTitle">{monthLabel}</h1>
+    </header>
+  )
+})
 
-          const dayEvents = events.filter((e) => e.dateKey === cell.dateKey)
+export default function Calendar({ allowPastEvents = true }: CalendarProps) {
+  const [cursor, setCursor] = useState<CalendarCursor>(() => {
+    const today = new Date()
+    return {
+      year: today.getFullYear(),
+      monthIndex: today.getMonth(),
+    }
+  })
+  const [events, setEvents] = useState<CalendarEvent[]>(() => loadEvents())
+  const [draft, setDraft] = useState<EventDraft>(() => createEmptyDraft())
+  const [formErrors, setFormErrors] = useState<EventFormErrors>({})
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [activeDateKey, setActiveDateKey] = useState<DateKey | null>(null)
+  const [isEditorClosing, setIsEditorClosing] = useState(false)
+  const [viewMoreDateKey, setViewMoreDateKey] = useState<DateKey | null>(null)
+  const [isViewMoreClosing, setIsViewMoreClosing] = useState(false)
 
-          dayEvents.sort((a, b) => {
-            if (a.allDay !== b.allDay) return a.allDay ? -1 : 1
-            const aKey = a.allDay ? "" : a.startTime
-            const bKey = b.allDay ? "" : b.startTime
-            return aKey.localeCompare(bKey)
-          })
+  const editorTimerRef = useRef<number | null>(null)
+  const viewMoreTimerRef = useRef<number | null>(null)
 
-          const rawMax = maxVisibleDate[cell.dateKey] ?? 3
-          const boundedMax = Math.max(1, Math.min(rawMax, 2))
-          const maxVisible = Math.min(dayEvents.length, boundedMax)
-          const visible = dayEvents.slice(0, maxVisible)
-          const overflow = dayEvents.length - visible.length
+  const visibleWeeks = useMemo(() => getMonthMatrix(cursor.year, cursor.monthIndex), [cursor.monthIndex, cursor.year])
+  const eventMap = useMemo(() => groupEventsByDate(events), [events])
+  const currentMonthLabel = useMemo(() => formatMonthLabel(cursor.year, cursor.monthIndex), [cursor.monthIndex, cursor.year])
+  const viewMoreEvents = useMemo(() => (viewMoreDateKey ? eventMap[viewMoreDateKey] ?? [] : []), [eventMap, viewMoreDateKey])
 
-          return (
-            <div
-              key={cell.dateKey}
-              ref={(el) => {
-                if (!el) {
-                  cellRefs.current.delete(cell.dateKey)
-                  return
-                }
-                cellRefs.current.set(cell.dateKey, el)
-              }}
-              className="dayCell"
-              style={{
-                position: "relative",
-                minHeight: 0,
-                fontFamily: "sans-serif",
-                borderTop: "1px solid var(--btn-border)",
-                borderRight: "1px solid var(--btn-border)",
-                padding: 8,
-                background: cell.inMonth ? "#fff" : "var(--out-of-month-bg)",
-                opacity: isPast ? 0.45 : 1,
-              }}
-            >
-              <div style={{ display: "grid", justifyItems: "center", gap: 2 }}>
-                {row === 0 && <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "var(--text-week-name)" }}>{weekday.toUpperCase()}</div>}
+  useEffect(() => {
+    return () => {
+      clearTimer(editorTimerRef)
+      clearTimer(viewMoreTimerRef)
+    }
+  }, [])
 
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: "50%",
-                    display: "grid",
-                    placeItems: "center",
-                    background: isToday ? "var(--text-today-bg)" : "transparent",
-                    color: isToday ? "var(--text-today)" : "inherit",
-                    fontWeight: 600,
-                    fontSize: 12,
-                  }}
-                >
-                  {cell.dateKey.slice(-2)}
-                </div>
-              </div>
+  const commitEvents = useCallback((nextEvents: CalendarEvent[]) => {
+    setEvents(nextEvents)
+    saveEvents(nextEvents)
+  }, [])
 
-              <button
-                className="btn addBtn"
-                onClick={() => openModal(cell.dateKey)}
-                disabled={isPast}
-                style={{
-                  position: "absolute",
-                  top: 6,
-                  right: 6,
-                  width: 26,
-                  height: 26,
-                  padding: 0,
-                  border: "white",
-                  background: "transparent",
-                  fontSize: 18,
-                  display: "grid",
-                  placeItems: "center",
-                  lineHeight: 1,
-                  cursor: isPast ? "not-allowed" : "pointer",
-                }}
-                aria-label={`Add event on ${cell.dateKey}`}
-              >
-                +
-              </button>
+  const resetForm = useCallback(() => {
+    setDraft(createEmptyDraft())
+    setFormErrors({})
+  }, [])
 
-              <div style={{ display: "grid", gap: 4, marginTop: 8, textAlign: "left" }}>
-                {visible.map((ev) => (
-                  <div
-                    key={ev.id}
-                    style={{
-                      fontSize: 12,
-                      padding: "2px 6px",
-                      borderRadius: 6,
-                      background: ev.color === "red" ? "var(--event-red)" : ev.color === "blue" ? "var(--event-blue)" : "var(--event-green)",
-                      color: "white",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      cursor: "pointer",
-                    }}
-                    title={ev.name}
-                    onClick={() => openEditFromEvent(ev)}
-                  >
-                    {ev.allDay ? ev.name : `${ev.startTime} ${ev.name}`}
-                  </div>
-                ))}
+  const openCreateModal = useCallback(
+    (dateKey: DateKey) => {
+      if (!allowPastEvents && isPastDateKey(dateKey)) return
 
-                {overflow > 0 && (
-                  <button className="btn" style={{ fontSize: 12, padding: "2px 6px", border: "white", background: "white", cursor: "pointer" }} onClick={() => openViewMore(cell.dateKey)}>
-                    +{overflow} more
-                  </button>
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+      clearTimer(editorTimerRef)
+      clearTimer(viewMoreTimerRef)
 
-      {(viewMoreDateKey || isViewMoreClosing) && (
-        <div
-          className={`modalBackDrop ${isViewMoreClosing ? "out" : "in"}`}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.3)",
-            display: "grid",
-            placeItems: "center",
-            padding: 16,
-          }}
-          onClick={closeViewMore}
-        >
-          <div
-            className={`modalCard ${isViewMoreClosing ? "out" : "in"}`}
-            style={{ background: "#fff", borderRadius: 12, padding: 16, width: "min(350px, 100%)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, fontFamily: "sans-serif", color: "var(--modal-date-header)" }}>
-              {formatModalDate(viewMoreDateKey)}
-              <button className="btn" style={{ border: "white", background: "white", cursor: "pointer", fontSize: "20px" }} onClick={closeViewMore}>
-                {"\u00D7"}
-              </button>
-            </div>
+      setIsEditorClosing(false)
+      setIsViewMoreClosing(false)
+      setViewMoreDateKey(null)
+      setEditingId(null)
+      setActiveDateKey(dateKey)
+      resetForm()
+    },
+    [allowPastEvents, resetForm],
+  )
 
-            <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-              {events
-                .filter((e) => e.dateKey === viewMoreDateKey)
-                .sort((a, b) => {
-                  if (a.allDay !== b.allDay) return a.allDay ? -1 : 1
-                  const aKey = a.allDay ? "" : a.startTime
-                  const bKey = b.allDay ? "" : b.startTime
-                  return aKey.localeCompare(bKey)
-                })
-                .map((ev) => (
-                  <button
-                    key={ev.id}
-                    className="btn"
-                    style={{
-                      textAlign: "left",
-                      border: "transparent",
-                      background: "#fff",
-                      padding: "0px 10px",
-                      borderRadius: 10,
-                      cursor: "pointer",
-                    }}
-                    onClick={() => openEditFromEvent(ev)}
-                    title={ev.name}
-                  >
-                    <div
-                      style={{
-                        fontFamily: "sans-serif",
-                        fontSize: 12,
-                        background: swatchColor(ev.color),
-                        padding: "3px 8px",
-                        border: "transparent",
-                        borderRadius: 6,
-                        textOverflow: "ellipsis",
-                        overflow: "hidden",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {ev.allDay ? ev.name : `${ev.startTime} - ${ev.endTime}  ${ev.name}`}
-                    </div>
-                  </button>
-                ))}
-            </div>
-          </div>
-        </div>
+  const closeEditor = useCallback(() => {
+    if (!activeDateKey) return
+
+    clearTimer(editorTimerRef)
+    setIsEditorClosing(true)
+    editorTimerRef.current = window.setTimeout(() => {
+      setActiveDateKey(null)
+      setEditingId(null)
+      setIsEditorClosing(false)
+      setFormErrors({})
+      editorTimerRef.current = null
+    }, MODAL_ANIMATION_MS)
+  }, [activeDateKey])
+
+  const openViewMore = useCallback((dateKey: DateKey) => {
+    clearTimer(viewMoreTimerRef)
+    setIsViewMoreClosing(false)
+    setViewMoreDateKey(dateKey)
+  }, [])
+
+  const closeViewMore = useCallback(() => {
+    if (!viewMoreDateKey) return
+
+    clearTimer(viewMoreTimerRef)
+    setIsViewMoreClosing(true)
+    viewMoreTimerRef.current = window.setTimeout(() => {
+      setViewMoreDateKey(null)
+      setIsViewMoreClosing(false)
+      viewMoreTimerRef.current = null
+    }, MODAL_ANIMATION_MS)
+  }, [viewMoreDateKey])
+
+  const populateDraftFromEvent = useCallback((calendarEvent: CalendarEvent) => {
+    clearTimer(editorTimerRef)
+    setIsEditorClosing(false)
+    setActiveDateKey(calendarEvent.dateKey)
+    setEditingId(calendarEvent.id)
+    setFormErrors({})
+    setDraft({
+      name: calendarEvent.name,
+      allDay: calendarEvent.allDay,
+      startTime: calendarEvent.allDay ? DEFAULT_START_TIME : calendarEvent.startTime,
+      endTime: calendarEvent.allDay ? DEFAULT_END_TIME : calendarEvent.endTime,
+      color: calendarEvent.color,
+    })
+  }, [])
+
+  const openEditEvent = useCallback(
+    (calendarEvent: CalendarEvent) => {
+      const startEditing = () => {
+        setViewMoreDateKey(null)
+        setIsViewMoreClosing(false)
+        populateDraftFromEvent(calendarEvent)
+      }
+
+      if (viewMoreDateKey) {
+        clearTimer(viewMoreTimerRef)
+        setIsViewMoreClosing(true)
+        viewMoreTimerRef.current = window.setTimeout(() => {
+          startEditing()
+          viewMoreTimerRef.current = null
+        }, MODAL_ANIMATION_MS)
+        return
+      }
+
+      startEditing()
+    },
+    [populateDraftFromEvent, viewMoreDateKey],
+  )
+
+  const updateDraft = useCallback((patch: Partial<EventDraft>) => {
+    setDraft((currentDraft) => ({ ...currentDraft, ...patch }))
+    setFormErrors((currentErrors) => {
+      const nextErrors = { ...currentErrors }
+
+      if ("name" in patch) {
+        delete nextErrors.name
+      }
+
+      if ("allDay" in patch || "startTime" in patch || "endTime" in patch) {
+        delete nextErrors.time
+      }
+
+      return nextErrors
+    })
+  }, [])
+
+  const validateDraft = useCallback((): EventFormErrors => {
+    const nextErrors: EventFormErrors = {}
+
+    if (!draft.name.trim()) {
+      nextErrors.name = "Event name is required."
+    }
+
+    if (!draft.allDay && draft.startTime >= draft.endTime) {
+      nextErrors.time = "End time must be later than start time."
+    }
+
+    return nextErrors
+  }, [draft])
+
+  const saveEvent = useCallback(() => {
+    if (!activeDateKey) return
+
+    const nextErrors = validateDraft()
+    if (Object.keys(nextErrors).length > 0) {
+      setFormErrors(nextErrors)
+      return
+    }
+
+    const trimmedName = draft.name.trim()
+    const nextEvent: CalendarEvent = draft.allDay
+      ? {
+          id: editingId ?? crypto.randomUUID(),
+          name: trimmedName,
+          dateKey: activeDateKey,
+          color: draft.color,
+          allDay: true,
+        }
+      : {
+          id: editingId ?? crypto.randomUUID(),
+          name: trimmedName,
+          dateKey: activeDateKey,
+          color: draft.color,
+          allDay: false,
+          startTime: draft.startTime,
+          endTime: draft.endTime,
+        }
+
+    const nextEvents = editingId ? events.map((calendarEvent) => (calendarEvent.id === editingId ? nextEvent : calendarEvent)) : [...events, nextEvent]
+
+    commitEvents(nextEvents)
+    closeEditor()
+  }, [activeDateKey, closeEditor, commitEvents, draft, editingId, events, validateDraft])
+
+  const deleteEvent = useCallback(() => {
+    if (!editingId) return
+
+    const nextEvents = events.filter((calendarEvent) => calendarEvent.id !== editingId)
+    commitEvents(nextEvents)
+    closeEditor()
+  }, [closeEditor, commitEvents, editingId, events])
+
+  const goPrev = useCallback(() => {
+    setCursor((currentCursor) => addMonths(currentCursor.year, currentCursor.monthIndex, -1))
+  }, [])
+
+  const goToday = useCallback(() => {
+    const today = new Date()
+    setCursor({
+      year: today.getFullYear(),
+      monthIndex: today.getMonth(),
+    })
+  }, [])
+
+  const goNext = useCallback(() => {
+    setCursor((currentCursor) => addMonths(currentCursor.year, currentCursor.monthIndex, 1))
+  }, [])
+
+  return (
+    <section className="appShell">
+      <CalendarHeader monthLabel={currentMonthLabel} onGoPrev={goPrev} onGoToday={goToday} onGoNext={goNext} />
+
+      <CalendarGrid
+        visibleWeeks={visibleWeeks}
+        eventMap={eventMap}
+        allowPastEvents={allowPastEvents}
+        onAddEvent={openCreateModal}
+        onEditEvent={openEditEvent}
+        onViewMore={openViewMore}
+      />
+
+      {viewMoreDateKey && <ViewMoreModal dateKey={viewMoreDateKey} dayEvents={viewMoreEvents} isClosing={isViewMoreClosing} onEditEvent={openEditEvent} onClose={closeViewMore} />}
+
+      {activeDateKey && (
+        <EventModal
+          dateKey={activeDateKey}
+          draft={draft}
+          errors={formErrors}
+          isClosing={isEditorClosing}
+          isEditing={editingId !== null}
+          onDraftChange={updateDraft}
+          onSave={saveEvent}
+          onDelete={deleteEvent}
+          onClose={closeEditor}
+        />
       )}
-
-      {(activeDateKey || isClosing) && (
-        <div
-          className={`modalBackDrop ${isClosing ? "out" : "in"}`}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.3)",
-            display: "grid",
-            placeItems: "center",
-            padding: 16,
-          }}
-          onClick={closeModal}
-        >
-          <div className={`modalCard ${isClosing ? "out" : "in"}`} style={{ background: "#fff", borderRadius: 8, padding: 20, width: "340px" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ padding: "5px 5px 10px", display: "flex", justifyContent: "space-between", gridTemplateColumns: "1fr auto auto", alignItems: "center", gap: 10, fontFamily: "sans-serif" }}>
-              <strong style={{ fontSize: 25, lineHeight: 1 }}>{editingId ? "Edit Event" : "Add Event"}</strong>
-              <span style={{ color: "var(--modal-date-header)", paddingRight: "25px", fontSize: 20 }}>{formatModalDate(activeDateKey)}</span>
-              <button
-                type="button"
-                className="btn"
-                aria-label="Close"
-                style={{ border: "none", cursor: "pointer", fontSize: 23, padding: 0, width: 24, height: 24, lineHeight: 1 }}
-                onClick={closeModal}
-              >
-                {"\u00D7"}
-              </button>
-            </div>
-            <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-              <label style={{ display: "grid", gap: 2 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "sans-serif", color: "var(--modal-form-label)" }}>Name</span>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  style={{ height: 28, padding: "0 6px", border: "1px solid #c7c7c7", borderRadius: 3, fontFamily: "sans-serif", fontSize: 13 }}
-                />
-              </label>
-
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "sans-serif" }}>
-                <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} style={{ margin: 0 }} />
-                <span style={{ fontSize: 12 }}>All Day?</span>
-              </label>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <label style={{ display: "grid", gap: 2 }}>
-                  <span style={{ fontFamily: "sans-serif", fontSize: 11, fontWeight: 600, color: "var(--modal-form-label)" }}>Start Time</span>
-                  <input
-                    type="time"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    disabled={allDay}
-                    style={{ height: 28, padding: "0 6px", border: "1px solid #c7c7c7", borderRadius: 0, fontFamily: "sans-serif", fontSize: 13, opacity: allDay ? 0.55 : 1 }}
-                  />
-                </label>
-
-                <label style={{ display: "grid", gap: 2 }}>
-                  <span style={{ fontFamily: "sans-serif", fontSize: 11, fontWeight: 600, color: "var(--modal-form-label)" }}>End Time</span>
-                  <input
-                    type="time"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    disabled={allDay}
-                    style={{ height: 28, padding: "0 6px", border: "1px solid #c7c7c7", borderRadius: 0, fontFamily: "sans-serif", fontSize: 13, opacity: allDay ? 0.55 : 1 }}
-                  />
-                </label>
-              </div>
-
-              <label style={{ display: "grid", gap: 4 }}>
-                <span style={{ fontFamily: "sans-serif", fontSize: 11, fontWeight: 600, color: "var(--modal-form-label)" }}>Color</span>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {COLOR_OPTIONS.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setColor(option)}
-                      aria-label={`Select ${option} color`}
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: 3,
-                        border: color === option ? "2px solid #6b6b6b" : "1px solid #d6d6d6",
-                        background: swatchColor(option),
-                        cursor: "pointer",
-                        padding: 0,
-                      }}
-                    />
-                  ))}
-                </div>
-              </label>
-
-              <button
-                className="btn"
-                onClick={save}
-                style={{
-                  width: "100%",
-                  height: 30,
-                  border: "1px solid var(--save-or-add-btn-border)",
-                  background: "var(--save-or-add-btn-bg)",
-                  color: "var(--save-or-add-btn-text)",
-                  cursor: "pointer",
-                  padding: 0,
-                  borderRadius: 4,
-                }}
-              >
-                {editingId ? "Save" : "Add"}
-              </button>
-              {editingId && (
-                <button
-                  className="btn"
-                  style={{ border: "1px solid var(--delete-btn-border)", background: "var(--delete-btn-bg)", color: "var(--delete-btn-text)", cursor: "pointer" }}
-                  onClick={() => {
-                    const next = events.filter((e) => e.id !== editingId)
-                    setEvents(next)
-                    saveEvents(next)
-                    closeModal()
-                    setEditingId(null)
-                  }}
-                >
-                  Delete
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </section>
   )
 }

@@ -9,4 +9,24 @@ export type BaseEvent = {
   color: EventColor
 }
 
-export type CalendarEvent = (BaseEvent & { allDay: true }) | (BaseEvent & { allDay: false; startTime: string; endTime: string })
+export type FullDayEvent = BaseEvent & {
+  allDay: true
+}
+
+export type TimedEvent = BaseEvent & {
+  allDay: false
+  startTime: string
+  endTime: string
+}
+
+export type CalendarEvent = FullDayEvent | TimedEvent
+
+export type CalendarCursor = {
+  year: number
+  monthIndex: number
+}
+
+export type EventFormErrors = {
+  name?: string
+  time?: string
+}

@@ -3,7 +3,7 @@ import Calendar from "./components/Calendar/Calendar"
 function App() {
   return (
     <div className="appArea">
-      <Calendar />
+      <Calendar allowPastEvents />
     </div>
   )
 }
