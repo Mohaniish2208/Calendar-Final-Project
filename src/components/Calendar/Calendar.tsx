@@ -127,8 +127,7 @@ function eventAriaLabel(calendarEvent: CalendarEvent, showTimeRange: boolean): s
 }
 
 function getFocusableElements(container: HTMLElement): HTMLElement[] {
-  const focusableSelector =
-    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
   return Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => !element.hasAttribute("aria-hidden"))
 }
@@ -188,12 +187,7 @@ function useModalFocusTrap(isOpen: boolean, dialogRef: RefObject<HTMLDivElement 
   }, [dialogRef, isOpen, onClose])
 }
 
-const EventItem = memo(function EventItem({
-  calendarEvent,
-  onSelect,
-  showTimeRange = false,
-  measureOnly = false,
-}: EventItemProps) {
+const EventItem = memo(function EventItem({ calendarEvent, onSelect, showTimeRange = false, measureOnly = false }: EventItemProps) {
   const isInteractive = !measureOnly && typeof onSelect === "function"
   const timeLabel = calendarEvent.allDay ? "" : showTimeRange ? `${calendarEvent.startTime} - ${calendarEvent.endTime}` : calendarEvent.startTime
   const eventItemClasses = `eventItem ${calendarEvent.allDay ? "eventItem--allDay" : "eventItem--timed"}${measureOnly ? " eventItem--measure" : ""}`
@@ -391,25 +385,14 @@ function ViewMoreModal({ dateKey, dayEvents, isClosing, onEditEvent, onClose }: 
         {dayEvents.length === 0 ? (
           <p className="emptyState">No events scheduled.</p>
         ) : (
-          dayEvents.map((calendarEvent) => (
-            <EventItem key={calendarEvent.id} calendarEvent={calendarEvent} onSelect={onEditEvent} showTimeRange />
-          ))
+          dayEvents.map((calendarEvent) => <EventItem key={calendarEvent.id} calendarEvent={calendarEvent} onSelect={onEditEvent} showTimeRange />)
         )}
       </div>
     </ModalFrame>
   )
 }
 
-const DayCell = memo(function DayCell({
-  calendarDay,
-  columnIndex,
-  rowIndex,
-  dayEvents,
-  allowPastEvents,
-  onAddEvent,
-  onEditEvent,
-  onViewMore,
-}: DayCellProps) {
+const DayCell = memo(function DayCell({ calendarDay, columnIndex, rowIndex, dayEvents, allowPastEvents, onAddEvent, onEditEvent, onViewMore }: DayCellProps) {
   const visibleEventsRef = useRef<HTMLDivElement>(null)
   const measureEventsRef = useRef<HTMLDivElement>(null)
   const moreButtonMeasureRef = useRef<HTMLButtonElement>(null)
@@ -419,13 +402,7 @@ const DayCell = memo(function DayCell({
   const isPast = isPastDateKey(calendarDay.dateKey)
   const canCreateEvent = allowPastEvents || !isPast
 
-  const dayCellClasses = [
-    "dayCell",
-    !calendarDay.inMonth ? "dayCell--outside" : "",
-    isPast ? "dayCell--past" : "",
-  ]
-    .filter(Boolean)
-    .join(" ")
+  const dayCellClasses = ["dayCell", !calendarDay.inMonth ? "dayCell--outside" : "", isPast ? "dayCell--past" : ""].filter(Boolean).join(" ")
 
   const measureVisibleEvents = useCallback(() => {
     const visibleEventsElement = visibleEventsRef.current
@@ -567,21 +544,9 @@ const DayCell = memo(function DayCell({
   )
 })
 
-const CalendarGrid = memo(function CalendarGrid({
-  visibleWeeks,
-  eventMap,
-  allowPastEvents,
-  onAddEvent,
-  onEditEvent,
-  onViewMore,
-}: CalendarGridProps) {
+const CalendarGrid = memo(function CalendarGrid({ visibleWeeks, eventMap, allowPastEvents, onAddEvent, onEditEvent, onViewMore }: CalendarGridProps) {
   return (
-    <div
-      className="calendarGrid"
-      role="grid"
-      aria-label="Monthly calendar"
-      style={{ gridTemplateRows: `repeat(${visibleWeeks.length}, minmax(var(--calendar-row-min-height), 1fr))` }}
-    >
+    <div className="calendarGrid" role="grid" aria-label="Monthly calendar" style={{ gridTemplateRows: `repeat(${visibleWeeks.length}, minmax(var(--calendar-row-min-height), 1fr))` }}>
       {visibleWeeks.map((week, rowIndex) =>
         week.map((calendarDay, columnIndex) => (
           <DayCell
@@ -605,7 +570,7 @@ const CalendarHeader = memo(function CalendarHeader({ monthLabel, onGoPrev, onGo
   return (
     <header className="calendarHeader">
       <div className="calendarNav">
-        <button type="button" className="btn" onClick={onGoToday}>
+        <button type="button" className="btn--today" onClick={onGoToday}>
           Today
         </button>
 
@@ -646,7 +611,7 @@ export default function Calendar({ allowPastEvents = true }: CalendarProps) {
   const visibleWeeks = useMemo(() => getMonthMatrix(cursor.year, cursor.monthIndex), [cursor.monthIndex, cursor.year])
   const eventMap = useMemo(() => groupEventsByDate(events), [events])
   const currentMonthLabel = useMemo(() => formatMonthLabel(cursor.year, cursor.monthIndex), [cursor.monthIndex, cursor.year])
-  const viewMoreEvents = useMemo(() => (viewMoreDateKey ? eventMap[viewMoreDateKey] ?? [] : []), [eventMap, viewMoreDateKey])
+  const viewMoreEvents = useMemo(() => (viewMoreDateKey ? (eventMap[viewMoreDateKey] ?? []) : []), [eventMap, viewMoreDateKey])
 
   useEffect(() => {
     return () => {
@@ -845,14 +810,7 @@ export default function Calendar({ allowPastEvents = true }: CalendarProps) {
     <section className="appShell">
       <CalendarHeader monthLabel={currentMonthLabel} onGoPrev={goPrev} onGoToday={goToday} onGoNext={goNext} />
 
-      <CalendarGrid
-        visibleWeeks={visibleWeeks}
-        eventMap={eventMap}
-        allowPastEvents={allowPastEvents}
-        onAddEvent={openCreateModal}
-        onEditEvent={openEditEvent}
-        onViewMore={openViewMore}
-      />
+      <CalendarGrid visibleWeeks={visibleWeeks} eventMap={eventMap} allowPastEvents={allowPastEvents} onAddEvent={openCreateModal} onEditEvent={openEditEvent} onViewMore={openViewMore} />
 
       {viewMoreDateKey && <ViewMoreModal dateKey={viewMoreDateKey} dayEvents={viewMoreEvents} isClosing={isViewMoreClosing} onEditEvent={openEditEvent} onClose={closeViewMore} />}
 
