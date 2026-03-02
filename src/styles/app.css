@@ -228,6 +228,7 @@ button {
   padding: 0;
   font-size: 1.1rem;
   line-height: 1;
+  border: transparent;
   border-color: transparent;
   opacity: 0;
   transition: opacity 160ms ease;
@@ -325,7 +326,7 @@ button {
 .modalCard {
   width: min(32rem, 100%);
   padding: var(--space-5);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid transparent;
   border-radius: var(--radius-3);
   background: var(--surface-base);
   box-shadow: var(--shadow-popover);
@@ -376,6 +377,7 @@ button {
 }
 
 .modalClose {
+  border: transparent;
   min-width: 2.25rem;
   padding: 0;
   font-size: 1.5rem;
