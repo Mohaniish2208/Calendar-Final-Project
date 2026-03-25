@@ -11,8 +11,8 @@ const COLOR_OPTIONS: EventColor[] = ["red", "green", "blue"]
 
 const DEFAULT_START_TIME = "09:00"
 const DEFAULT_END_TIME = "10:00"
-const DEFAULT_VISIBLE_EVENTS_FALLBACK = 3
 const MODAL_ANIMATION_MS = 220
+const MAX_EVENTS_PER_CELL = 3
 
 type CalendarProps = {
   allowPastEvents?: boolean
@@ -226,7 +226,15 @@ function ModalFrame({ isClosing, labelledBy, size = "default", onClose, children
   useModalFocusTrap(!isClosing, dialogRef, onClose)
 
   return (
-    <div className={`modalBackdrop ${isClosing ? "out" : "in"}`} onClick={onClose}>
+    <div
+      className={`modalBackdrop ${isClosing ? "out" : "in"}`}
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) {
+          event.preventDefault()
+          onClose()
+        }
+      }}
+    >
       <div
         ref={dialogRef}
         role="dialog"
@@ -409,7 +417,6 @@ const DayCell = memo(function DayCell({ calendarDay, columnIndex, rowIndex, dayE
   const visibleEventsRef = useRef<HTMLDivElement>(null)
   const measureEventsRef = useRef<HTMLDivElement>(null)
   const moreButtonMeasureRef = useRef<HTMLButtonElement>(null)
-  const [maxVisibleEvents, setMaxVisibleEvents] = useState(() => Math.min(dayEvents.length, DEFAULT_VISIBLE_EVENTS_FALLBACK))
 
   const isToday = isTodayDateKey(calendarDay.dateKey)
   const isPast = isPastDateKey(calendarDay.dateKey)
@@ -423,7 +430,6 @@ const DayCell = memo(function DayCell({ calendarDay, columnIndex, rowIndex, dayE
 
     if (!visibleEventsElement || !measureEventsElement) return
     if (dayEvents.length === 0) {
-      setMaxVisibleEvents(0)
       return
     }
 
@@ -458,8 +464,6 @@ const DayCell = memo(function DayCell({ calendarDay, columnIndex, rowIndex, dayE
     if (visibleCount === 0 && eventHeights.length > 1) {
       visibleCount = moreButtonHeight <= availableHeight ? 0 : 1
     }
-
-    setMaxVisibleEvents((currentVisibleCount) => (currentVisibleCount === visibleCount ? currentVisibleCount : visibleCount))
   }, [dayEvents.length])
 
   useEffect(() => {
@@ -494,8 +498,7 @@ const DayCell = memo(function DayCell({ calendarDay, columnIndex, rowIndex, dayE
     }
   }, [measureVisibleEvents])
 
-  const safeVisibleCount = Math.max(0, Math.min(maxVisibleEvents, dayEvents.length))
-  const { visible: visibleEvents, overflow } = splitVisibleEvents(dayEvents, safeVisibleCount)
+  const { visible: visibleEvents, overflow } = splitVisibleEvents(dayEvents, MAX_EVENTS_PER_CELL)
 
   const handleKeyboardOpen = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!canCreateEvent) return
@@ -543,7 +546,7 @@ const DayCell = memo(function DayCell({ calendarDay, columnIndex, rowIndex, dayE
 
         {overflow > 0 && (
           <button type="button" className="btn btn--more moreBtn" onClick={() => onViewMore(calendarDay.dateKey)}>
-            +{overflow} more
+            + {overflow} more
           </button>
         )}
       </div>
