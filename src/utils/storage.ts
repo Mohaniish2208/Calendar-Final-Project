@@ -2,6 +2,16 @@ import type { CalendarEvent, EventColor } from "../types/calendar"
 
 const STORAGE_KEY = "calendar_events_v1"
 
+type StoredEvent = {
+  id?: string
+  name?: string
+  dateKey?: string
+  color?: EventColor
+  allDay?: boolean
+  startTime?: string
+  endTime?: string
+}
+
 function isEventColor(value: unknown): value is EventColor {
   return value === "red" || value === "blue" || value === "green"
 }
@@ -9,18 +19,13 @@ function isEventColor(value: unknown): value is EventColor {
 function normalizeEvent(raw: unknown): CalendarEvent | null {
   if (!raw || typeof raw !== "object") return null
 
-  const maybeEvent = raw as Partial<CalendarEvent>
-  const hasBaseFields =
-    typeof maybeEvent.id === "string" &&
-    typeof maybeEvent.name === "string" &&
-    typeof maybeEvent.dateKey === "string" &&
-    isEventColor(maybeEvent.color)
+  const maybeEvent = raw as StoredEvent
 
-  if (!hasBaseFields || typeof maybeEvent.allDay !== "boolean") {
+  if (typeof maybeEvent.id !== "string" || typeof maybeEvent.name !== "string" || typeof maybeEvent.dateKey !== "string" || !isEventColor(maybeEvent.color) || typeof maybeEvent.allDay !== "boolean") {
     return null
   }
 
-  if (maybeEvent.allDay) {
+  if (maybeEvent.allDay === true) {
     return {
       id: maybeEvent.id,
       name: maybeEvent.name,
