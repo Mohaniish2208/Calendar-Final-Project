@@ -227,7 +227,20 @@ function ModalFrame({ isClosing, labelledBy, size = "default", onClose, children
 
   return (
     <div className={`modalBackdrop ${isClosing ? "out" : "in"}`} onClick={onClose}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={labelledBy} tabIndex={-1} className={modalClasses} onClick={(event) => event.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
+        className={modalClasses}
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => {
+          if (event.target === event.currentTarget) {
+            onClose()
+          }
+        }}
+      >
         {children}
       </div>
     </div>
@@ -511,7 +524,11 @@ const DayCell = memo(function DayCell({ calendarDay, columnIndex, rowIndex, dayE
         <button
           type="button"
           className="btn btn--ghost addBtn"
-          onClick={() => onAddEvent(calendarDay.dateKey)}
+          onPointerUp={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onAddEvent(calendarDay.dateKey)
+          }}
           disabled={!canCreateEvent}
           aria-label={`Add event on ${formatShortDate(calendarDay.dateKey)}`}
         >

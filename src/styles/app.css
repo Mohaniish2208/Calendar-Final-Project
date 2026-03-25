@@ -245,12 +245,19 @@ button {
   border-color: transparent;
   opacity: 0;
   transition: opacity 160ms ease;
+  touch-action: manipulation;
 }
 
 .dayCell:hover .addBtn,
 .dayCell:focus-within .addBtn,
 .dayCell:focus-visible .addBtn {
   opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .addBtn {
+    opacity: 1;
+  }
 }
 
 .dayCellEvents {
