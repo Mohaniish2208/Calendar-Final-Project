@@ -13,6 +13,11 @@ const DEFAULT_START_TIME = "09:00"
 const DEFAULT_END_TIME = "10:00"
 const MODAL_ANIMATION_MS = 220
 const MAX_EVENTS_PER_CELL = 3
+const handleCaps = (text: string) => {
+  return text.replace(/^(\s*)([a-z])/, (_, spaces, firstLetter) => {
+    return spaces + firstLetter.toUpperCase()
+  })
+}
 
 type CalendarProps = {
   allowPastEvents?: boolean
@@ -290,7 +295,7 @@ function EventModal({ dateKey, draft, errors, isClosing, isEditing, onDraftChang
             type="text"
             className={`formInput${errors.name ? " formInput--error" : ""}`}
             value={draft.name}
-            onChange={(event) => onDraftChange({ name: event.target.value })}
+            onChange={(e) => onDraftChange({ name: handleCaps(e.target.value) })}
             aria-invalid={Boolean(errors.name)}
             aria-describedby={errors.name ? `${nameInputId}-error` : undefined}
             required
